@@ -1,5 +1,6 @@
 use hal::blocking::i2c;
 use hal::blocking::spi;
+use hal::digital::v2::OutputPin;
 
 use super::*;
 
@@ -61,10 +62,19 @@ impl<M: mutex::BusMutex<cell::RefCell<T>>, T> BusManager<M, T> {
     }
 
     /// Acquire a proxy for this bus.
-    pub fn acquire<'a>(&'a self) -> BusProxy<'a, M, T> {
-        BusProxy(&self.0, marker::PhantomData)
+    pub fn acquire_i2c<'a>(&'a self) -> BusProxy<'a, M, T, ()> {
+        BusProxy(&self.0, marker::PhantomData, ())
+    }
+
+    /// Acquire a proxy for this bus.
+    pub fn acquire_spi<'a, P>(&'a self, pin: P) -> BusProxy<'a, M, T, P> 
+    where P: OutputPin 
+    {
+        BusProxy(&self.0, marker::PhantomData, pin)
     }
 }
+
+    
 
 /// A proxy type that can be used instead of an actual bus peripheral.
 ///
@@ -72,12 +82,13 @@ impl<M: mutex::BusMutex<cell::RefCell<T>>, T> BusManager<M, T> {
 /// actual bus peripheral.
 ///
 /// `BusProxies` are created by calling [`BusManager::acquire`]
-pub struct BusProxy<'a, M: 'a + mutex::BusMutex<cell::RefCell<T>>, T>(
+pub struct BusProxy<'a, M: 'a + mutex::BusMutex<cell::RefCell<T>>, T, P>(
     &'a M,
     marker::PhantomData<T>,
+    P,
 );
 
-impl<'a, M, I2C: i2c::Write> i2c::Write for BusProxy<'a, M, I2C>
+impl<'a, M, I2C: i2c::Write> i2c::Write for BusProxy<'a, M, I2C, ()>
 where
     M: 'a + mutex::BusMutex<cell::RefCell<I2C>>,
 {
@@ -91,7 +102,7 @@ where
     }
 }
 
-impl<'a, M, I2C: i2c::Read> i2c::Read for BusProxy<'a, M, I2C>
+impl<'a, M, I2C: i2c::Read> i2c::Read for BusProxy<'a, M, I2C, ()>
 where
     M: 'a + mutex::BusMutex<cell::RefCell<I2C>>,
 {
@@ -105,7 +116,7 @@ where
     }
 }
 
-impl<'a, M, I2C: i2c::WriteRead> i2c::WriteRead for BusProxy<'a, M, I2C>
+impl<'a, M, I2C: i2c::WriteRead> i2c::WriteRead for BusProxy<'a, M, I2C, ()>
 where
     M: 'a + mutex::BusMutex<cell::RefCell<I2C>>,
 {
@@ -124,30 +135,41 @@ where
     }
 }
 
-impl<'a, M, SPI: spi::Transfer<u8>> spi::Transfer<u8> for BusProxy<'a, M, SPI>
+#[derive(Debug, PartialEq, Clone)]
+pub enum Error<S, P> {
+    Spi(S),
+    Pin(P),
+}
+pub trait ChipSelect {}
+
+impl<'a, M, SPI: spi::Transfer<u8>, P> spi::Transfer<u8> for BusProxy<'a, M, SPI, P>
 where
     M: 'a + mutex::BusMutex<cell::RefCell<SPI>>,
+    P: OutputPin,
 {
-    type Error = SPI::Error;
+    type Error = Error<SPI::Error, P::Error>;
 
     fn transfer<'w>(&mut self, words: &'w mut [u8]) -> Result<&'w [u8], Self::Error> {
         self.0.lock(move |lock| {
             let mut i = lock.borrow_mut();
-            i.transfer(words)
+
+            i.transfer(words).map_err(Error::Spi)
         })
     }
 }
 
-impl<'a, M, SPI: spi::Write<u8>> spi::Write<u8> for BusProxy<'a, M, SPI>
+impl<'a, M, SPI: spi::Write<u8>, P> spi::Write<u8> for BusProxy<'a, M, SPI, P>
 where
     M: 'a + mutex::BusMutex<cell::RefCell<SPI>>,
+    P: OutputPin,
 {
-    type Error = SPI::Error;
+    type Error = Error<SPI::Error, P::Error>;
 
     fn write(&mut self, words: &[u8]) -> Result<(), Self::Error> {
         self.0.lock(|lock| {
             let mut i = lock.borrow_mut();
-            i.write(words)
+
+            i.write(words).map_err(Error::Spi)
         })
     }
 }

@@ -7,6 +7,7 @@ use hal::blocking::spi::Write as SPIWrite;
 
 use hal_mock::i2c::{Mock as I2cMock, Transaction as I2cTransaction};
 use hal_mock::spi::{Mock as SpiMock, Transaction as SpiTransaction};
+use hal_mock::pin::{Transaction as PinTransaction, Mock as PinMock, State as PinState};
 
 #[test]
 fn fake_i2c_device() {
@@ -46,7 +47,7 @@ fn i2c_proxy() {
     let mut device = I2cMock::new(&expect);
 
     let manager = shared_bus::StdBusManager::new(device.clone());
-    let mut proxy = manager.acquire();
+    let mut proxy = manager.acquire_i2c();
 
     proxy.write(0xde, &[0xad, 0xbe, 0xef]).unwrap();
 
@@ -58,8 +59,10 @@ fn spi_proxy() {
     let expect = vec![SpiTransaction::write(vec![0xde, 0xad, 0xbe, 0xef])];
     let mut device = SpiMock::new(&expect);
 
+    let pin_expect = vec![PinTransaction::set(PinState::Low), PinTransaction::set(PinState::High)];
+
     let manager = shared_bus::StdBusManager::new(device.clone());
-    let mut proxy = manager.acquire();
+    let mut proxy = manager.acquire_spi();
 
     proxy.write(&[0xde, 0xad, 0xbe, 0xef]).unwrap();
 
